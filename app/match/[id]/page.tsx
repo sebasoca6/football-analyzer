@@ -2,20 +2,24 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { useParams, useSearchParams, useRouter } from 'next/navigation';
-import { calculateStats, calculateProbabilities, getFormString, getYellowCardsAvg, getScoringStreak, getCleanSheetStreak, getWithoutWinStreak, getFormTrend, getHalfTimeStats } from '@/lib/analysis';
+import { calculateStats, calculateProbabilities, getFormString, getYellowCardsAvg, getScoringStreak, getCleanSheetStreak, getWithoutWinStreak, getFormTrend, getHalfTimeStats, getCardsAvg } from '@/lib/analysis';
 import { saveMatch, removeSavedMatch, isMatchSaved } from '@/lib/favorites';
 import { generateNarrative } from '@/lib/narrative';
-import type { Fixture, TeamSeasonStats, AnalysisStats, Probabilities } from '@/types/football';
+import { LEAGUES } from '@/lib/constants';
+import type { Fixture, TeamSeasonStats, AnalysisStats, Probabilities, MatchDetail, StandingRow, LineupPlayer } from '@/types/football';
+import StandingsTable from '@/components/StandingsTable';
 
-type Tab = 'resumen' | 'h2h' | 'local' | 'visitante' | 'estadisticas' | 'probabilidades' | 'analisis';
+type Tab = 'resumen' | 'h2h' | 'local' | 'visitante' | 'estadisticas' | 'probabilidades' | 'analisis' | 'alineaciones' | 'clasificacion';
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'resumen', label: 'Resumen' },
+  { id: 'alineaciones', label: '⚽ Alineaciones' },
   { id: 'h2h', label: 'H2H' },
   { id: 'local', label: 'Forma Local' },
   { id: 'visitante', label: 'Forma Visitante' },
   { id: 'estadisticas', label: 'Estadísticas' },
   { id: 'probabilidades', label: 'Probabilidades' },
+  { id: 'clasificacion', label: '📊 Clasificación' },
   { id: 'analisis', label: '📝 Análisis' },
 ];
 
@@ -206,6 +210,100 @@ function StatsCard({ stats, label }: { stats: AnalysisStats; label: string }) {
   );
 }
 
+function PlayerDot({ player, color }: { player: LineupPlayer; color: string }) {
+  const shortName = player.name.split(' ').pop() ?? player.name;
+  return (
+    <div className="flex flex-col items-center gap-0.5" style={{ minWidth: '3rem', maxWidth: '3rem' }}>
+      <div className={`w-8 h-8 rounded-full ${color} flex items-center justify-center text-white text-xs font-bold shadow-md border-2 border-white/30`}>
+        {player.shirtNumber || '?'}
+      </div>
+      <span className="text-white text-xs text-center leading-tight w-full truncate px-0.5">
+        {shortName}
+      </span>
+    </div>
+  );
+}
+
+function H2HMatchRow({ f, perspectiveId }: { f: Fixture; perspectiveId: number }) {
+  const isHome = f.teams.home.id === perspectiveId;
+  const winner = isHome ? f.teams.home.winner : f.teams.away.winner;
+  const result = winner === true ? 'W' : winner === false ? 'L' : 'D';
+  const finished = ['FT', 'AET', 'PEN'].includes(f.fixture.status.short);
+  const scheduled = f.fixture.status.short === 'NS';
+  const d = new Date(f.fixture.date);
+  const dateStr = `${d.getDate()}/${d.getMonth() + 1}/${String(d.getFullYear()).slice(-2)}`;
+  const timeStr = d.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
+  return (
+    <div className="flex items-center gap-2 px-3 py-2.5 border-b border-slate-800/40 last:border-0 hover:bg-slate-800/20 transition-colors">
+      <div className="w-14 flex-shrink-0">
+        <p className="text-xs text-slate-400">{dateStr}</p>
+        <p className="text-xs text-slate-600">{scheduled ? timeStr : f.fixture.status.short}</p>
+      </div>
+      <div className="flex-1 flex items-center gap-1 min-w-0">
+        <div className="flex items-center gap-1 flex-1 justify-end min-w-0">
+          {f.teams.home.logo && <img src={f.teams.home.logo} alt="" className="w-4 h-4 object-contain flex-shrink-0" />}
+          <span className="text-xs text-slate-300 truncate">{f.teams.home.name}</span>
+        </div>
+        <div className="flex items-center gap-0.5 px-2 font-mono font-bold text-sm flex-shrink-0">
+          {finished ? (
+            <>
+              <span className={f.teams.home.winner ? 'text-white' : 'text-slate-500'}>{f.goals.home}</span>
+              <span className="text-slate-700">-</span>
+              <span className={f.teams.away.winner ? 'text-white' : 'text-slate-500'}>{f.goals.away}</span>
+            </>
+          ) : (
+            <span className="text-slate-500 text-xs">{scheduled ? 'vs' : '-'}</span>
+          )}
+        </div>
+        <div className="flex items-center gap-1 flex-1 min-w-0">
+          {f.teams.away.logo && <img src={f.teams.away.logo} alt="" className="w-4 h-4 object-contain flex-shrink-0" />}
+          <span className="text-xs text-slate-300 truncate">{f.teams.away.name}</span>
+        </div>
+      </div>
+      <div className="w-5 flex-shrink-0 flex justify-center">
+        {finished && (
+          <span className={`w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold text-white ${
+            result === 'W' ? 'bg-green-500' : result === 'D' ? 'bg-slate-600' : 'bg-red-500'
+          }`}>
+            {result === 'W' ? 'V' : result === 'D' ? 'E' : 'D'}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function TeamFormation({ formation, lineup, color, reverse = false }: {
+  formation: string | null;
+  lineup: LineupPlayer[];
+  color: string;
+  reverse?: boolean;
+}) {
+  const rows: LineupPlayer[][] = [];
+  if (!formation || lineup.length === 0) {
+    if (lineup.length > 0) rows.push(lineup);
+  } else {
+    const groups = [1, ...formation.split('-').map(Number)];
+    let idx = 0;
+    for (const count of groups) {
+      rows.push(lineup.slice(idx, idx + count));
+      idx += count;
+    }
+  }
+  const displayRows = reverse ? [...rows].reverse() : rows;
+  return (
+    <div className="flex flex-col justify-between h-full gap-2 py-3">
+      {displayRows.map((row, i) => (
+        <div key={i} className="flex justify-center gap-1 flex-wrap">
+          {row.map((p, j) => (
+            <PlayerDot key={p.id || j} player={p} color={color} />
+          ))}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export default function MatchPage() {
   const { id } = useParams<{ id: string }>();
   const sp = useSearchParams();
@@ -223,6 +321,7 @@ export default function MatchPage() {
   const awayLogo = sp.get('awayLogo') ?? '';
   const leagueName = sp.get('leagueName') ?? '';
   const matchDate = sp.get('date') ?? '';
+  const leagueCode = LEAGUES.find(l => l.id === leagueId)?.code ?? '';
 
   const [homeFixtures, setHomeFixtures] = useState<Fixture[]>([]);
   const [awayFixtures, setAwayFixtures] = useState<Fixture[]>([]);
@@ -233,6 +332,12 @@ export default function MatchPage() {
   const [error, setError] = useState('');
   const [saved, setSaved] = useState(false);
   const [bookOdds, setBookOdds] = useState({ home: '', draw: '', away: '', over25: '', under25: '', btts: '', noBtts: '' });
+  const [matchDetail, setMatchDetail] = useState<MatchDetail | null>(null);
+  const [standings, setStandings] = useState<StandingRow[]>([]);
+  const [showComparison, setShowComparison] = useState(false);
+  const [h2hPage, setH2hPage] = useState(0);
+  const [recentTeam, setRecentTeam] = useState<'home' | 'away'>('home');
+  const [recentPage, setRecentPage] = useState(0);
 
   useEffect(() => {
     if (id) setSaved(isMatchSaved(Number(id)));
@@ -246,20 +351,28 @@ export default function MatchPage() {
     }
     setLoading(true);
     try {
-      const [homeRes, awayRes, h2hRes, homeStatsRes, awayStatsRes] = await Promise.all([
+      const standingsPromise = leagueCode
+        ? fetch(`/api/standings?league=${leagueCode}`)
+        : Promise.resolve(new Response(JSON.stringify({ table: [] }), { headers: { 'Content-Type': 'application/json' } }));
+
+      const [homeRes, awayRes, h2hRes, homeStatsRes, awayStatsRes, detailRes, standingsRes] = await Promise.all([
         fetch(`/api/team-form?team=${homeId}&season=${season}`),
         fetch(`/api/team-form?team=${awayId}&season=${season}`),
         fetch(`/api/h2h?h2h=${homeId}-${awayId}`),
         fetch(`/api/team-stats?team=${homeId}&league=${leagueId}&season=${season}`),
         fetch(`/api/team-stats?team=${awayId}&league=${leagueId}&season=${season}`),
+        fetch(`/api/match-detail?id=${id}`),
+        standingsPromise,
       ]);
 
-      const [homeData, awayData, h2hData, homeStatsData, awayStatsData] = await Promise.all([
+      const [homeData, awayData, h2hData, homeStatsData, awayStatsData, detailData, standingsData] = await Promise.all([
         homeRes.json(),
         awayRes.json(),
         h2hRes.json(),
         homeStatsRes.json(),
         awayStatsRes.json(),
+        detailRes.json(),
+        standingsRes.json(),
       ]);
 
       setHomeFixtures(homeData.response ?? []);
@@ -267,12 +380,14 @@ export default function MatchPage() {
       setH2hFixtures(h2hData.response ?? []);
       if (homeStatsData.response) setHomeSeasonStats(homeStatsData.response);
       if (awayStatsData.response) setAwaySeasonStats(awayStatsData.response);
+      if (detailData.response) setMatchDetail(detailData.response);
+      if (standingsData.table) setStandings(standingsData.table);
     } catch {
       setError('Error al cargar los datos. Verifica tu conexión y API key.');
     } finally {
       setLoading(false);
     }
-  }, [homeId, awayId, leagueId, season]);
+  }, [homeId, awayId, leagueId, season, id, leagueCode]);
 
   useEffect(() => {
     fetchData();
@@ -334,6 +449,42 @@ export default function MatchPage() {
   const awayTrend = getFormTrend(awayFixtures, awayId);
   const homeHT = getHalfTimeStats(homeFixtures, homeId, 10);
   const awayHT = getHalfTimeStats(awayFixtures, awayId, 10);
+  const homeCards = getCardsAvg(homeFixtures, homeId);
+  const awayCards = getCardsAvg(awayFixtures, awayId);
+  const homeCards5 = getCardsAvg(homeFixtures, homeId, 5);
+  const homeCards10 = getCardsAvg(homeFixtures, homeId, 10);
+  const awayCards5 = getCardsAvg(awayFixtures, awayId, 5);
+  const awayCards10 = getCardsAvg(awayFixtures, awayId, 10);
+
+  const H2H_PAGE_SIZE = 5;
+  const pagedH2H = h2hFixtures.slice(h2hPage * H2H_PAGE_SIZE, (h2hPage + 1) * H2H_PAGE_SIZE);
+  const recentFormFixtures = recentTeam === 'home' ? homeFixtures : awayFixtures;
+  const recentFormId = recentTeam === 'home' ? homeId : awayId;
+  const recentFormName = recentTeam === 'home' ? homeName : awayName;
+  const recentFormLogo = recentTeam === 'home' ? homeLogo : awayLogo;
+  const pagedRecentForm = recentFormFixtures.slice(recentPage * H2H_PAGE_SIZE, (recentPage + 1) * H2H_PAGE_SIZE);
+  let h2hNoLossStreak = 0;
+  for (const f of h2hFixtures) {
+    const isH = f.teams.home.id === homeId;
+    const w = isH ? f.teams.home.winner : f.teams.away.winner;
+    if (w !== false) h2hNoLossStreak++;
+    else break;
+  }
+  let h2hNoCSStreak = 0;
+  for (const f of h2hFixtures) {
+    if ((f.goals.home ?? 0) > 0 && (f.goals.away ?? 0) > 0) h2hNoCSStreak++;
+    else break;
+  }
+  const h2hFive = h2hFixtures.slice(0, 5);
+  const h2hTen = h2hFixtures.slice(0, 10);
+  const h2hBTTS10 = h2hTen.filter(f => (f.goals.home ?? 0) > 0 && (f.goals.away ?? 0) > 0).length;
+  const h2hUnder25_5 = h2hFive.filter(f => (f.goals.home ?? 0) + (f.goals.away ?? 0) < 3).length;
+  const h2hOver25_5 = h2hFive.filter(f => (f.goals.home ?? 0) + (f.goals.away ?? 0) > 2).length;
+  const recentTenF = recentFormFixtures.slice(0, 10);
+  const recentOver25_9 = recentFormFixtures.slice(0, 9).filter(f => (f.goals.home ?? 0) + (f.goals.away ?? 0) > 2).length;
+  const recentBTTS_10 = recentTenF.filter(f => (f.goals.home ?? 0) > 0 && (f.goals.away ?? 0) > 0).length;
+  const recentCS_10 = recentTenF.filter(f => f.teams.home.id === recentFormId ? (f.goals.away ?? 1) === 0 : (f.goals.home ?? 1) === 0).length;
+  const recentNoScore_10 = recentTenF.filter(f => f.teams.home.id === recentFormId ? (f.goals.home ?? 1) === 0 : (f.goals.away ?? 1) === 0).length;
 
   const trendLabel = (t: ReturnType<typeof getFormTrend>) =>
     t === 'improving' ? { text: '↑ Mejorando', cls: 'text-green-400' }
@@ -572,71 +723,170 @@ export default function MatchPage() {
 
       {activeTab === 'h2h' && (
         <div className="space-y-4">
-          <div className="grid grid-cols-3 gap-3 text-center">
-            <div className="bg-blue-500/10 rounded-xl p-4 border border-blue-500/20">
-              <p className="text-3xl font-black text-blue-400">{h2hHomeStats.wins}</p>
-              <p className="text-sm text-slate-400 mt-1">{homeName}</p>
+          {/* Big score summary */}
+          <div className="bg-[#111827] border border-slate-800 rounded-xl p-5">
+            <div className="flex items-center justify-center gap-6">
+              <div className="flex flex-col items-center gap-2 flex-1">
+                {homeLogo && <img src={homeLogo} alt="" className="w-14 h-14 object-contain" />}
+                <span className="text-4xl font-black text-blue-400">{h2hHomeStats.wins}</span>
+                <span className="text-xs text-slate-400 text-center truncate max-w-[90px]">{homeName}</span>
+              </div>
+              <div className="text-center flex-shrink-0">
+                <span className="text-4xl font-black text-slate-500">{h2hHomeStats.draws}</span>
+                <p className="text-xs text-slate-600 mt-0.5">Empates</p>
+              </div>
+              <div className="flex flex-col items-center gap-2 flex-1">
+                {awayLogo && <img src={awayLogo} alt="" className="w-14 h-14 object-contain" />}
+                <span className="text-4xl font-black text-orange-400">{h2hAwayStats.wins}</span>
+                <span className="text-xs text-slate-400 text-center truncate max-w-[90px]">{awayName}</span>
+              </div>
             </div>
-            <div className="bg-yellow-500/10 rounded-xl p-4 border border-yellow-500/20">
-              <p className="text-3xl font-black text-yellow-400">{h2hHomeStats.draws}</p>
-              <p className="text-sm text-slate-400 mt-1">Empates</p>
-            </div>
-            <div className="bg-orange-500/10 rounded-xl p-4 border border-orange-500/20">
-              <p className="text-3xl font-black text-orange-400">{h2hAwayStats.wins}</p>
-              <p className="text-sm text-slate-400 mt-1">{awayName}</p>
-            </div>
-          </div>
-
-          <div className="bg-[#1a2236] rounded-xl p-4 grid grid-cols-2 md:grid-cols-4 gap-3 text-center text-sm">
-            <div>
-              <p className="text-white font-bold">
-                {h2hHomeStats.matches > 0
-                  ? ((h2hHomeStats.goalsScored + h2hAwayStats.goalsScored) / h2hHomeStats.matches).toFixed(2)
-                  : '-'}
-              </p>
-              <p className="text-slate-400 text-xs">Goles/partido</p>
-            </div>
-            <div>
-              <p className="text-white font-bold">
-                {pct(h2hHomeStats.btts, h2hHomeStats.matches)}%
-              </p>
-              <p className="text-slate-400 text-xs">BTTS</p>
-            </div>
-            <div>
-              <p className="text-white font-bold">
-                {pct(h2hHomeStats.over25, h2hHomeStats.matches)}%
-              </p>
-              <p className="text-slate-400 text-xs">+2.5 goles</p>
-            </div>
-            <div>
-              <p className="text-white font-bold">
-                {pct(h2hHomeStats.cleanSheets + h2hAwayStats.cleanSheets, h2hHomeStats.matches * 2)}%
-              </p>
-              <p className="text-slate-400 text-xs">Portería a 0</p>
+            <div className="flex justify-center gap-4 mt-3 text-xs text-slate-600">
+              <span>{h2hFixtures.length} partidos totales</span>
+              {h2hHomeStats.matches > 0 && (
+                <><span>·</span><span>{((h2hHomeStats.goalsScored + h2hAwayStats.goalsScored) / h2hHomeStats.matches).toFixed(1)} goles/p</span></>
+              )}
             </div>
           </div>
 
-          <div className="bg-[#111827] rounded-xl border border-slate-800 overflow-hidden">
-            <table className="w-full">
-              <thead>
-                <tr className="bg-slate-800/50 text-xs text-slate-400 uppercase tracking-wider">
-                  <th className="py-2 px-2 text-left">Fecha</th>
-                  <th className="py-2 px-2 text-left">L/V</th>
-                  <th className="py-2 px-2 text-left">Rival</th>
-                  <th className="py-2 px-2 text-left">Liga</th>
-                  <th className="py-2 px-2 text-center">Res.</th>
-                  <th className="py-2 px-2 text-center">R</th>
-                </tr>
-              </thead>
-              <tbody>
-                {h2hFixtures.slice(0, 20).map((f) => (
-                  <FixtureRow key={f.fixture.id} f={f} teamId={homeId} showLeague />
+          {/* Two columns: Cara a cara + Partidos */}
+          <div className="grid md:grid-cols-2 gap-4">
+            {/* Cara a cara */}
+            <div className="bg-[#111827] border border-slate-800 rounded-xl overflow-hidden">
+              <div className="px-3 py-2.5 bg-slate-800/30 border-b border-slate-800">
+                <h4 className="text-xs font-bold text-slate-300 uppercase tracking-widest">Cara a cara</h4>
+              </div>
+              {h2hFixtures.length === 0 ? (
+                <p className="text-center py-10 text-slate-500 text-sm">Sin historial de enfrentamientos</p>
+              ) : (
+                <>
+                  <div>
+                    {pagedH2H.map((f) => (
+                      <H2HMatchRow key={f.fixture.id} f={f} perspectiveId={homeId} />
+                    ))}
+                  </div>
+                  {h2hFixtures.length > H2H_PAGE_SIZE && (
+                    <div className="flex items-center justify-between px-3 py-2 border-t border-slate-800 text-xs">
+                      <button
+                        onClick={() => setH2hPage(p => p - 1)}
+                        disabled={h2hPage === 0}
+                        className="w-6 h-6 flex items-center justify-center rounded text-slate-400 hover:text-green-400 disabled:opacity-30 text-lg"
+                      >‹</button>
+                      <span className="text-slate-500">
+                        {h2hPage * H2H_PAGE_SIZE + 1}–{Math.min((h2hPage + 1) * H2H_PAGE_SIZE, h2hFixtures.length)} de {h2hFixtures.length}
+                      </span>
+                      <button
+                        onClick={() => setH2hPage(p => p + 1)}
+                        disabled={(h2hPage + 1) * H2H_PAGE_SIZE >= h2hFixtures.length}
+                        className="w-6 h-6 flex items-center justify-center rounded text-slate-400 hover:text-green-400 disabled:opacity-30 text-lg"
+                      >›</button>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+
+            {/* Partidos */}
+            <div className="bg-[#111827] border border-slate-800 rounded-xl overflow-hidden">
+              <div className="px-3 py-2 bg-slate-800/30 border-b border-slate-800">
+                <h4 className="text-xs font-bold text-slate-300 uppercase tracking-widest mb-2">Partidos</h4>
+                <div className="flex gap-1.5">
+                  {([['home', homeName, homeLogo], ['away', awayName, awayLogo]] as [string, string, string][]).map(([team, name, logo]) => (
+                    <button
+                      key={team}
+                      onClick={() => { setRecentTeam(team as 'home' | 'away'); setRecentPage(0); }}
+                      className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium border transition-all ${
+                        recentTeam === team
+                          ? 'bg-green-500/20 border-green-500/40 text-green-400'
+                          : 'bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-500'
+                      }`}
+                    >
+                      {logo && <img src={logo} alt="" className="w-4 h-4 object-contain" />}
+                      <span>{name}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                {pagedRecentForm.map((f) => (
+                  <H2HMatchRow key={f.fixture.id} f={f} perspectiveId={recentFormId} />
                 ))}
-              </tbody>
-            </table>
-            {h2hFixtures.length === 0 && (
-              <p className="text-center py-8 text-slate-500">Sin historial de enfrentamientos</p>
-            )}
+              </div>
+              {recentFormFixtures.length > H2H_PAGE_SIZE && (
+                <div className="flex items-center justify-between px-3 py-2 border-t border-slate-800 text-xs">
+                  <button
+                    onClick={() => setRecentPage(p => p - 1)}
+                    disabled={recentPage === 0}
+                    className="w-6 h-6 flex items-center justify-center rounded text-slate-400 hover:text-green-400 disabled:opacity-30 text-lg"
+                  >‹</button>
+                  <span className="text-slate-500">
+                    {recentPage * H2H_PAGE_SIZE + 1}–{Math.min((recentPage + 1) * H2H_PAGE_SIZE, recentFormFixtures.length)} de {recentFormFixtures.length}
+                  </span>
+                  <button
+                    onClick={() => setRecentPage(p => p + 1)}
+                    disabled={(recentPage + 1) * H2H_PAGE_SIZE >= recentFormFixtures.length}
+                    className="w-6 h-6 flex items-center justify-center rounded text-slate-400 hover:text-green-400 disabled:opacity-30 text-lg"
+                  >›</button>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Rachas */}
+          <div className="grid md:grid-cols-2 gap-4">
+            {/* Rachas de cara a cara */}
+            <div className="bg-[#111827] border border-slate-800 rounded-xl overflow-hidden">
+              <div className="px-3 py-2.5 bg-slate-800/30 border-b border-slate-800">
+                <h4 className="text-xs font-bold text-slate-300 uppercase tracking-widest">Rachas de cara a cara</h4>
+              </div>
+              <div className="divide-y divide-slate-800/50">
+                {[
+                  { logo: homeLogo, label: `Sin derrotas (${homeName.split(' ')[0]})`, value: String(h2hNoLossStreak) },
+                  { logo: null, label: 'Sin portería a cero (ambos)', value: String(h2hNoCSStreak) },
+                  { logo: null, label: 'Ambos marcan (últ. 10)', value: `${h2hBTTS10}/10` },
+                  { logo: null, label: 'Menos de 2.5 goles (últ. 5)', value: `${h2hUnder25_5}/5` },
+                  { logo: null, label: 'Más de 2.5 goles (últ. 5)', value: `${h2hOver25_5}/5` },
+                  { logo: null, label: 'Goles por partido', value: h2hHomeStats.matches > 0 ? ((h2hHomeStats.goalsScored + h2hAwayStats.goalsScored) / h2hHomeStats.matches).toFixed(1) : '—' },
+                ].map((r, i) => (
+                  <div key={i} className="flex items-center justify-between px-4 py-2.5">
+                    <div className="flex items-center gap-2">
+                      {r.logo
+                        ? <img src={r.logo} alt="" className="w-4 h-4 object-contain flex-shrink-0" />
+                        : <span className="w-4 flex-shrink-0" />
+                      }
+                      <span className="text-sm text-slate-300">{r.label}</span>
+                    </div>
+                    <span className="font-bold text-white ml-2">{r.value}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Rachas recientes */}
+            <div className="bg-[#111827] border border-slate-800 rounded-xl overflow-hidden">
+              <div className="px-3 py-2.5 bg-slate-800/30 border-b border-slate-800 flex items-center justify-between">
+                <h4 className="text-xs font-bold text-slate-300 uppercase tracking-widest">Rachas recientes</h4>
+                <div className="flex items-center gap-1">
+                  {recentFormLogo && <img src={recentFormLogo} alt="" className="w-4 h-4 object-contain" />}
+                  <span className="text-xs text-slate-400">{recentFormName}</span>
+                </div>
+              </div>
+              <div className="divide-y divide-slate-800/50">
+                {[
+                  { label: 'Más de 2.5 goles (últ. 9)', value: `${recentOver25_9}/9` },
+                  { label: 'BTTS — ambos marcan (últ. 10)', value: `${recentBTTS_10}/10` },
+                  { label: 'Portería a 0 (últ. 10)', value: `${recentCS_10}/10` },
+                  { label: 'Sin marcar (últ. 10)', value: `${recentNoScore_10}/10` },
+                  { label: '🟨 Amarillas/partido (últ. 20)', value: `${getCardsAvg(recentFormFixtures, recentFormId).yellow.toFixed(1)}/p` },
+                  { label: '🟥 Rojas/partido (últ. 20)', value: `${getCardsAvg(recentFormFixtures, recentFormId).red.toFixed(2)}/p` },
+                ].map((r, i) => (
+                  <div key={i} className="flex items-center justify-between px-4 py-2.5">
+                    <span className="text-sm text-slate-300">{r.label}</span>
+                    <span className="font-bold text-white">{r.value}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
         </div>
       )}
@@ -806,6 +1056,167 @@ export default function MatchPage() {
               </div>
             ))}
           </div>
+
+          {/* Detailed Comparison Panel */}
+          <div className="bg-[#111827] border border-slate-800 rounded-xl overflow-hidden">
+            <button
+              onClick={() => setShowComparison(v => !v)}
+              className="w-full flex items-center justify-between px-5 py-4 text-left hover:bg-slate-800/40 transition-colors"
+            >
+              <div className="flex items-center gap-2">
+                <span className="text-green-400 text-lg">📊</span>
+                <span className="font-semibold text-white text-sm">Comparativa Detallada</span>
+                <span className="text-xs text-slate-500 ml-1">Temporada · Últ.10 · Últ.5</span>
+              </div>
+              <span className="text-slate-400 text-lg">{showComparison ? '▲' : '▼'}</span>
+            </button>
+
+            {showComparison && (
+              <div className="border-t border-slate-800 overflow-x-auto">
+                <table className="w-full text-xs min-w-[600px]">
+                  <thead>
+                    <tr className="bg-slate-800/60">
+                      <th className="py-3 px-3 text-left text-slate-400 font-medium w-36">Estadística</th>
+                      <th colSpan={3} className="py-3 px-2 text-center text-blue-400 font-semibold border-r border-slate-700">
+                        {homeName}
+                      </th>
+                      <th colSpan={3} className="py-3 px-2 text-center text-orange-400 font-semibold">
+                        {awayName}
+                      </th>
+                    </tr>
+                    <tr className="bg-slate-800/30 border-b border-slate-700">
+                      <th className="py-2 px-3 text-left text-slate-500"></th>
+                      <th className="py-2 px-2 text-center text-slate-400 font-normal">Temp.</th>
+                      <th className="py-2 px-2 text-center text-slate-400 font-normal">Últ.10</th>
+                      <th className="py-2 px-2 text-center text-slate-400 font-normal border-r border-slate-700">Últ.5</th>
+                      <th className="py-2 px-2 text-center text-slate-400 font-normal">Temp.</th>
+                      <th className="py-2 px-2 text-center text-slate-400 font-normal">Últ.10</th>
+                      <th className="py-2 px-2 text-center text-slate-400 font-normal">Últ.5</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {[
+                      {
+                        label: '⚽ Goles marc./p',
+                        hT: homeStats20.matches > 0 ? (homeStats20.goalsScored / homeStats20.matches).toFixed(2) : '—',
+                        h10: homeStats10.matches > 0 ? (homeStats10.goalsScored / homeStats10.matches).toFixed(2) : '—',
+                        h5: homeStats5.matches > 0 ? (homeStats5.goalsScored / homeStats5.matches).toFixed(2) : '—',
+                        aT: awayStats20.matches > 0 ? (awayStats20.goalsScored / awayStats20.matches).toFixed(2) : '—',
+                        a10: awayStats10.matches > 0 ? (awayStats10.goalsScored / awayStats10.matches).toFixed(2) : '—',
+                        a5: awayStats5.matches > 0 ? (awayStats5.goalsScored / awayStats5.matches).toFixed(2) : '—',
+                        higherIsGood: true,
+                      },
+                      {
+                        label: '🛡 Goles enc./p',
+                        hT: homeStats20.matches > 0 ? (homeStats20.goalsConceded / homeStats20.matches).toFixed(2) : '—',
+                        h10: homeStats10.matches > 0 ? (homeStats10.goalsConceded / homeStats10.matches).toFixed(2) : '—',
+                        h5: homeStats5.matches > 0 ? (homeStats5.goalsConceded / homeStats5.matches).toFixed(2) : '—',
+                        aT: awayStats20.matches > 0 ? (awayStats20.goalsConceded / awayStats20.matches).toFixed(2) : '—',
+                        a10: awayStats10.matches > 0 ? (awayStats10.goalsConceded / awayStats10.matches).toFixed(2) : '—',
+                        a5: awayStats5.matches > 0 ? (awayStats5.goalsConceded / awayStats5.matches).toFixed(2) : '—',
+                        higherIsGood: false,
+                      },
+                      {
+                        label: '🔁 BTTS %',
+                        hT: `${pct(homeStats20.btts, homeStats20.matches)}%`,
+                        h10: `${pct(homeStats10.btts, homeStats10.matches)}%`,
+                        h5: `${pct(homeStats5.btts, homeStats5.matches)}%`,
+                        aT: `${pct(awayStats20.btts, awayStats20.matches)}%`,
+                        a10: `${pct(awayStats10.btts, awayStats10.matches)}%`,
+                        a5: `${pct(awayStats5.btts, awayStats5.matches)}%`,
+                        higherIsGood: true,
+                      },
+                      {
+                        label: '📈 +2.5 goles %',
+                        hT: `${pct(homeStats20.over25, homeStats20.matches)}%`,
+                        h10: `${pct(homeStats10.over25, homeStats10.matches)}%`,
+                        h5: `${pct(homeStats5.over25, homeStats5.matches)}%`,
+                        aT: `${pct(awayStats20.over25, awayStats20.matches)}%`,
+                        a10: `${pct(awayStats10.over25, awayStats10.matches)}%`,
+                        a5: `${pct(awayStats5.over25, awayStats5.matches)}%`,
+                        higherIsGood: true,
+                      },
+                      {
+                        label: '🧤 Portería a 0%',
+                        hT: `${pct(homeStats20.cleanSheets, homeStats20.matches)}%`,
+                        h10: `${pct(homeStats10.cleanSheets, homeStats10.matches)}%`,
+                        h5: `${pct(homeStats5.cleanSheets, homeStats5.matches)}%`,
+                        aT: `${pct(awayStats20.cleanSheets, awayStats20.matches)}%`,
+                        a10: `${pct(awayStats10.cleanSheets, awayStats10.matches)}%`,
+                        a5: `${pct(awayStats5.cleanSheets, awayStats5.matches)}%`,
+                        higherIsGood: true,
+                      },
+                      {
+                        label: '❌ Sin marcar %',
+                        hT: `${pct(homeStats20.failedToScore, homeStats20.matches)}%`,
+                        h10: `${pct(homeStats10.failedToScore, homeStats10.matches)}%`,
+                        h5: `${pct(homeStats5.failedToScore, homeStats5.matches)}%`,
+                        aT: `${pct(awayStats20.failedToScore, awayStats20.matches)}%`,
+                        a10: `${pct(awayStats10.failedToScore, awayStats10.matches)}%`,
+                        a5: `${pct(awayStats5.failedToScore, awayStats5.matches)}%`,
+                        higherIsGood: false,
+                      },
+                      {
+                        label: '🏆 Victorias %',
+                        hT: `${pct(homeStats20.wins, homeStats20.matches)}%`,
+                        h10: `${pct(homeStats10.wins, homeStats10.matches)}%`,
+                        h5: `${pct(homeStats5.wins, homeStats5.matches)}%`,
+                        aT: `${pct(awayStats20.wins, awayStats20.matches)}%`,
+                        a10: `${pct(awayStats10.wins, awayStats10.matches)}%`,
+                        a5: `${pct(awayStats5.wins, awayStats5.matches)}%`,
+                        higherIsGood: true,
+                      },
+                      {
+                        label: '🟨 Amarillas/p',
+                        hT: homeCards.yellow.toFixed(1),
+                        h10: homeCards10.yellow.toFixed(1),
+                        h5: homeCards5.yellow.toFixed(1),
+                        aT: awayCards.yellow.toFixed(1),
+                        a10: awayCards10.yellow.toFixed(1),
+                        a5: awayCards5.yellow.toFixed(1),
+                        higherIsGood: false,
+                      },
+                      {
+                        label: '🟥 Rojas/partido',
+                        hT: homeCards.red.toFixed(2),
+                        h10: homeCards10.red.toFixed(2),
+                        h5: homeCards5.red.toFixed(2),
+                        aT: awayCards.red.toFixed(2),
+                        a10: awayCards10.red.toFixed(2),
+                        a5: awayCards5.red.toFixed(2),
+                        higherIsGood: false,
+                      },
+                      {
+                        label: '⚑ Córners/p',
+                        hT: 'N/D', h10: 'N/D', h5: 'N/D',
+                        aT: 'N/D', a10: 'N/D', a5: 'N/D',
+                        higherIsGood: true,
+                      },
+                    ].map((row, i) => {
+                      const hVals = [row.hT, row.h10, row.h5];
+                      const aVals = [row.aT, row.a10, row.a5];
+                      return (
+                        <tr key={i} className={`border-b border-slate-800/50 ${i % 2 === 0 ? 'bg-slate-900/20' : ''}`}>
+                          <td className="py-2.5 px-3 text-slate-400 font-medium whitespace-nowrap">{row.label}</td>
+                          {hVals.map((v, j) => (
+                            <td key={j} className={`py-2.5 px-2 text-center font-mono ${j === 2 ? 'border-r border-slate-700' : ''} ${
+                              v === 'N/D' ? 'text-slate-600' : 'text-blue-300'
+                            }`}>{v}</td>
+                          ))}
+                          {aVals.map((v, j) => (
+                            <td key={j} className={`py-2.5 px-2 text-center font-mono ${
+                              v === 'N/D' ? 'text-slate-600' : 'text-orange-300'
+                            }`}>{v}</td>
+                          ))}
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+                <p className="text-xs text-slate-600 px-4 py-2">⚑ Córners no disponibles en el plan gratuito de football-data.org · Temp. = últimos 20 partidos</p>
+              </div>
+            )}
+          </div>
         </div>
       )}
 
@@ -939,6 +1350,141 @@ export default function MatchPage() {
             ⚠️ <strong>Aviso:</strong> Las probabilidades son estimaciones estadísticas basadas en datos históricos. 
             No constituyen asesoramiento de apuestas. Los resultados deportivos son impredecibles.
           </div>
+        </div>
+      )}
+
+      {activeTab === 'alineaciones' && (
+        <div className="space-y-4">
+          {matchDetail ? (
+            <>
+              <div className="bg-[#111827] border border-slate-800 rounded-xl p-4">
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center gap-2">
+                    {homeLogo && <img src={homeLogo} alt="" className="w-6 h-6 object-contain" />}
+                    <div>
+                      <p className="text-sm font-bold text-blue-300">{homeName}</p>
+                      <p className="text-xs text-slate-500">{matchDetail.homeTeam.formation ?? 'N/D'}</p>
+                    </div>
+                  </div>
+                  <p className="text-xs text-slate-500 uppercase tracking-widest">Formación</p>
+                  <div className="flex items-center gap-2 text-right">
+                    <div>
+                      <p className="text-sm font-bold text-orange-300">{awayName}</p>
+                      <p className="text-xs text-slate-500">{matchDetail.awayTeam.formation ?? 'N/D'}</p>
+                    </div>
+                    {awayLogo && <img src={awayLogo} alt="" className="w-6 h-6 object-contain" />}
+                  </div>
+                </div>
+                {(matchDetail.homeTeam.lineup.length > 0 || matchDetail.awayTeam.lineup.length > 0) ? (
+                  <div className="relative rounded-xl overflow-hidden border border-white/10" style={{ background: 'linear-gradient(180deg, #1a5c2e 0%, #2d7a46 50%, #1a5c2e 100%)' }}>
+                    <div className="absolute inset-y-0 left-1/2 w-px bg-white/20" />
+                    <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-16 h-16 rounded-full border border-white/20" />
+                    <div className="relative flex" style={{ minHeight: 420 }}>
+                      <div className="flex-1 border-r border-white/10 px-1">
+                        <TeamFormation formation={matchDetail.homeTeam.formation} lineup={matchDetail.homeTeam.lineup} color="bg-blue-600" />
+                      </div>
+                      <div className="flex-1 px-1">
+                        <TeamFormation formation={matchDetail.awayTeam.formation} lineup={matchDetail.awayTeam.lineup} color="bg-red-600" reverse />
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="text-center py-12 text-slate-500 border border-dashed border-slate-700 rounded-xl">
+                    <p className="text-2xl mb-2">⚽</p>
+                    <p>Alineaciones no disponibles aún</p>
+                    <p className="text-xs mt-1">Se publican aproximadamente 1h antes del partido</p>
+                  </div>
+                )}
+              </div>
+
+              {matchDetail.referees.filter(r => r.type === 'REFEREE').length > 0 && (
+                <div className="bg-[#111827] border border-slate-800 rounded-xl p-4">
+                  <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">Árbitro</h4>
+                  {matchDetail.referees.filter(r => r.type === 'REFEREE').map((ref) => (
+                    <div key={ref.id} className="flex items-start justify-between gap-4">
+                      <div>
+                        <p className="font-semibold text-white">{ref.name}</p>
+                        {ref.nationality && <p className="text-xs text-slate-500">{ref.nationality}</p>}
+                      </div>
+                      <div className="flex gap-4 text-center text-xs">
+                        <div>
+                          <p className="text-yellow-400 font-bold text-base">{homeCards.yellow.toFixed(1)}</p>
+                          <p className="text-slate-500">🟨 {homeName.split(' ')[0]}</p>
+                        </div>
+                        <div>
+                          <p className="text-red-400 font-bold text-base">{homeCards.red.toFixed(1)}</p>
+                          <p className="text-slate-500">🟥 {homeName.split(' ')[0]}</p>
+                        </div>
+                        <div className="w-px bg-slate-700" />
+                        <div>
+                          <p className="text-yellow-400 font-bold text-base">{awayCards.yellow.toFixed(1)}</p>
+                          <p className="text-slate-500">🟨 {awayName.split(' ')[0]}</p>
+                        </div>
+                        <div>
+                          <p className="text-red-400 font-bold text-base">{awayCards.red.toFixed(1)}</p>
+                          <p className="text-slate-500">🟥 {awayName.split(' ')[0]}</p>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                  <p className="text-xs text-slate-600 mt-3">Tarjetas promedio/partido de cada equipo (últimos 20 partidos)</p>
+                </div>
+              )}
+
+              <div className="grid md:grid-cols-2 gap-4">
+                {[
+                  { teamName: homeName, logo: homeLogo, isHome: true, detail: matchDetail.homeTeam },
+                  { teamName: awayName, logo: awayLogo, isHome: false, detail: matchDetail.awayTeam },
+                ].map(({ teamName, logo, isHome, detail }) => (
+                  <div key={teamName} className="bg-[#1a2236] rounded-xl p-4 space-y-3">
+                    <div className="flex items-center gap-2">
+                      {logo && <img src={logo} alt="" className="w-5 h-5 object-contain" />}
+                      <h4 className="text-sm font-bold text-slate-300">{teamName}</h4>
+                    </div>
+                    {detail.coach && (
+                      <div className="text-sm">
+                        <span className="text-slate-500">Entrenador: </span>
+                        <span className="text-white font-medium">{detail.coach.name}</span>
+                      </div>
+                    )}
+                    {detail.bench.length > 0 && (
+                      <div>
+                        <p className="text-xs text-slate-500 uppercase tracking-wide mb-2">Suplentes</p>
+                        <div className="flex flex-wrap gap-1.5">
+                          {detail.bench.map((p) => (
+                            <span key={p.id} className={`px-2 py-0.5 rounded text-xs ${isHome ? 'bg-blue-500/10 text-blue-300 border border-blue-500/20' : 'bg-orange-500/10 text-orange-300 border border-orange-500/20'}`}>
+                              {p.shirtNumber} {p.name.split(' ').pop()}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </>
+          ) : (
+            <div className="text-center py-12 text-slate-500">
+              <p>Cargando detalles del partido...</p>
+            </div>
+          )}
+        </div>
+      )}
+
+      {activeTab === 'clasificacion' && (
+        <div className="space-y-4">
+          {standings.length === 0 ? (
+            <div className="text-center py-12 text-slate-500">
+              <p>Clasificación no disponible</p>
+            </div>
+          ) : (
+            <div className="bg-[#111827] border border-slate-800 rounded-xl">
+              <div className="px-4 py-3 border-b border-slate-800">
+                <p className="text-sm font-semibold text-slate-300">{leagueName}</p>
+              </div>
+              <StandingsTable standings={standings} homeTeamId={homeId} awayTeamId={awayId} />
+            </div>
+          )}
         </div>
       )}
 

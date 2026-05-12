@@ -39,6 +39,13 @@ export interface Score {
   penalty: Goals;
 }
 
+export interface Booking {
+  minute: number;
+  team: { id: number; name: string };
+  player: { id: number; name: string };
+  card: 'YELLOW' | 'RED' | 'YELLOW_RED';
+}
+
 export interface Fixture {
   fixture: {
     id: number;
@@ -56,6 +63,7 @@ export interface Fixture {
   };
   goals: Goals;
   score: Score;
+  bookings?: Booking[];
 }
 
 export interface FixtureStatistic {
@@ -141,6 +149,40 @@ export interface StandingRow {
   goalsFor: number;
   goalsAgainst: number;
   goalDifference: number;
+}
+
+export interface LineupPlayer {
+  id: number;
+  name: string;
+  position: string;
+  shirtNumber: number;
+}
+
+export interface MatchDetail {
+  id: number;
+  status: string;
+  homeTeam: {
+    id: number;
+    name: string;
+    formation: string | null;
+    lineup: LineupPlayer[];
+    bench: LineupPlayer[];
+    coach: { id: number; name: string } | null;
+  };
+  awayTeam: {
+    id: number;
+    name: string;
+    formation: string | null;
+    lineup: LineupPlayer[];
+    bench: LineupPlayer[];
+    coach: { id: number; name: string } | null;
+  };
+  referees: Array<{
+    id: number;
+    name: string;
+    nationality: string | null;
+    type: string;
+  }>;
 }
 
 export interface SavedMatch {

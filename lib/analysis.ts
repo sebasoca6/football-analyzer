@@ -230,3 +230,22 @@ export function getHalfTimeStats(fixtures: Fixture[], teamId: number, n = 10): H
 
   return { matches, htGoalsFor, htGoalsAgainst, htWins, htDraws, htLosses, stGoalsFor, stGoalsAgainst };
 }
+
+export function getCardsAvg(fixtures: Fixture[], teamId: number, n = 20): { yellow: number; red: number } {
+  const list = fixtures.slice(0, n);
+  if (list.length === 0) return { yellow: 0, red: 0 };
+  let yellow = 0;
+  let red = 0;
+  for (const f of list) {
+    if (!f.bookings) continue;
+    for (const b of f.bookings) {
+      if (b.team.id !== teamId) continue;
+      if (b.card === 'YELLOW') yellow++;
+      else if (b.card === 'RED' || b.card === 'YELLOW_RED') red++;
+    }
+  }
+  return {
+    yellow: Math.round((yellow / list.length) * 10) / 10,
+    red: Math.round((red / list.length) * 10) / 10,
+  };
+}

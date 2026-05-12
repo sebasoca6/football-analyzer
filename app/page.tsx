@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { LEAGUES, CURRENT_SEASON } from '@/lib/constants';
 import type { Fixture, LeagueConfig, StandingRow, SavedMatch } from '@/types/football';
 import { getSavedMatches, removeSavedMatch } from '@/lib/favorites';
+import StandingsTable from '@/components/StandingsTable';
 
 function todayStr() {
   return new Date().toISOString().split('T')[0];
@@ -42,11 +43,6 @@ function StatusBadge({ status }: { status: string }) {
 }
 
 type HomeView = 'partidos' | 'clasificacion';
-
-function FormChar({ c }: { c: string }) {
-  const cls = c === 'W' ? 'bg-green-500' : c === 'D' ? 'bg-yellow-500' : 'bg-red-500';
-  return <span className={`inline-block w-3 h-3 rounded-full ${cls}`} title={c} />;
-}
 
 const DAYS_TO_SHOW = 4;
 
@@ -242,63 +238,8 @@ export default function HomePage() {
             <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-4 text-red-400 text-sm">{standingsError}</div>
           )}
           {!loadingStandings && standings.length > 0 && (
-            <div className="bg-[#111827] rounded-xl border border-slate-800 overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="bg-slate-800/50 text-xs text-slate-400 uppercase tracking-wider">
-                    <th className="py-2 px-3 text-center w-8">#</th>
-                    <th className="py-2 px-3 text-left">Equipo</th>
-                    <th className="py-2 px-2 text-center">PJ</th>
-                    <th className="py-2 px-2 text-center">V</th>
-                    <th className="py-2 px-2 text-center">E</th>
-                    <th className="py-2 px-2 text-center">D</th>
-                    <th className="py-2 px-2 text-center">GF</th>
-                    <th className="py-2 px-2 text-center">GC</th>
-                    <th className="py-2 px-2 text-center">DG</th>
-                    <th className="py-2 px-2 text-center font-bold text-white">Pts</th>
-                    <th className="py-2 px-3 text-center">Forma</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {standings.map((row, idx) => {
-                    const zoneColor =
-                      idx < 4 ? 'border-l-2 border-blue-500' :
-                      idx < 6 ? 'border-l-2 border-orange-400' :
-                      idx >= standings.length - 3 ? 'border-l-2 border-red-500' : '';
-                    return (
-                      <tr key={row.team.id} className={`border-b border-slate-800 hover:bg-slate-800/30 ${zoneColor}`}>
-                        <td className="py-2 px-3 text-center text-slate-400 font-mono">{row.position}</td>
-                        <td className="py-2 px-3">
-                          <div className="flex items-center gap-2">
-                            {row.team.crest && <img src={row.team.crest} alt="" className="w-5 h-5 object-contain" />}
-                            <span className="text-slate-200 font-medium">{row.team.shortName || row.team.name}</span>
-                          </div>
-                        </td>
-                        <td className="py-2 px-2 text-center text-slate-400">{row.playedGames}</td>
-                        <td className="py-2 px-2 text-center text-green-400">{row.won}</td>
-                        <td className="py-2 px-2 text-center text-yellow-400">{row.draw}</td>
-                        <td className="py-2 px-2 text-center text-red-400">{row.lost}</td>
-                        <td className="py-2 px-2 text-center text-slate-300">{row.goalsFor}</td>
-                        <td className="py-2 px-2 text-center text-slate-300">{row.goalsAgainst}</td>
-                        <td className={`py-2 px-2 text-center font-semibold ${row.goalDifference > 0 ? 'text-green-400' : row.goalDifference < 0 ? 'text-red-400' : 'text-slate-400'}`}>
-                          {row.goalDifference > 0 ? '+' : ''}{row.goalDifference}
-                        </td>
-                        <td className="py-2 px-2 text-center font-black text-white">{row.points}</td>
-                        <td className="py-2 px-3">
-                          <div className="flex gap-0.5 justify-center">
-                            {(row.form ?? '').split('').map((c, i) => <FormChar key={i} c={c} />)}
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-              <div className="flex gap-4 p-3 text-xs text-slate-500">
-                <span><span className="inline-block w-2 h-2 bg-blue-500 rounded-sm mr-1" />UCL</span>
-                <span><span className="inline-block w-2 h-2 bg-orange-400 rounded-sm mr-1" />UEL</span>
-                <span><span className="inline-block w-2 h-2 bg-red-500 rounded-sm mr-1" />Descenso</span>
-              </div>
+            <div className="bg-[#111827] rounded-xl border border-slate-800">
+              <StandingsTable standings={standings} />
             </div>
           )}
         </section>

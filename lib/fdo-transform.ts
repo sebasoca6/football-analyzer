@@ -75,5 +75,11 @@ export function transformFDOMatch(m: any): Fixture {
       extratime: { home: null, away: null },
       penalty: { home: null, away: null },
     },
+    bookings: (m.bookings ?? []).map((b: any) => ({
+      minute: b.minute ?? 0,
+      team: { id: b.team?.id ?? 0, name: b.team?.name ?? '' },
+      player: { id: b.player?.id ?? 0, name: b.player?.name ?? '' },
+      card: b.card ?? 'YELLOW',
+    })),
   };
 }
