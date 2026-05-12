@@ -147,3 +147,86 @@ export function getYellowCardsAvg(stats: TeamSeasonStats): number {
   const played = stats.fixtures.played.total;
   return played > 0 ? Math.round((total / played) * 10) / 10 : 0;
 }
+
+export function getScoringStreak(fixtures: Fixture[], teamId: number): number {
+  let streak = 0;
+  for (const f of fixtures.slice(0, 20)) {
+    const isHome = f.teams.home.id === teamId;
+    const scored = isHome ? (f.goals.home ?? 0) : (f.goals.away ?? 0);
+    if (scored > 0) streak++;
+    else break;
+  }
+  return streak;
+}
+
+export function getCleanSheetStreak(fixtures: Fixture[], teamId: number): number {
+  let streak = 0;
+  for (const f of fixtures.slice(0, 20)) {
+    const isHome = f.teams.home.id === teamId;
+    const conceded = isHome ? (f.goals.away ?? 0) : (f.goals.home ?? 0);
+    if (conceded === 0) streak++;
+    else break;
+  }
+  return streak;
+}
+
+export function getWithoutWinStreak(fixtures: Fixture[], teamId: number): number {
+  let streak = 0;
+  for (const f of fixtures.slice(0, 20)) {
+    const isHome = f.teams.home.id === teamId;
+    const winner = isHome ? f.teams.home.winner : f.teams.away.winner;
+    if (winner !== true) streak++;
+    else break;
+  }
+  return streak;
+}
+
+export type FormTrend = 'improving' | 'declining' | 'stable';
+
+export function getFormTrend(fixtures: Fixture[], teamId: number): FormTrend {
+  if (fixtures.length < 10) return 'stable';
+  const pts = (s: AnalysisStats) => s.wins * 3 + s.draws;
+  const recent = pts(calculateStats(fixtures, teamId, 5));
+  const prev = pts(calculateStats(fixtures.slice(5), teamId, 5));
+  if (recent >= prev + 3) return 'improving';
+  if (recent <= prev - 3) return 'declining';
+  return 'stable';
+}
+
+export interface HalfTimeStats {
+  matches: number;
+  htGoalsFor: number;
+  htGoalsAgainst: number;
+  htWins: number;
+  htDraws: number;
+  htLosses: number;
+  stGoalsFor: number;
+  stGoalsAgainst: number;
+}
+
+export function getHalfTimeStats(fixtures: Fixture[], teamId: number, n = 10): HalfTimeStats {
+  const list = fixtures.slice(0, n);
+  let matches = 0;
+  let htGoalsFor = 0, htGoalsAgainst = 0;
+  let htWins = 0, htDraws = 0, htLosses = 0;
+  let stGoalsFor = 0, stGoalsAgainst = 0;
+
+  for (const f of list) {
+    const isHome = f.teams.home.id === teamId;
+    const htFor = isHome ? f.score.halftime.home : f.score.halftime.away;
+    const htAgainst = isHome ? f.score.halftime.away : f.score.halftime.home;
+    const ftFor = isHome ? (f.goals.home ?? 0) : (f.goals.away ?? 0);
+    const ftAgainst = isHome ? (f.goals.away ?? 0) : (f.goals.home ?? 0);
+    if (htFor === null || htAgainst === null) continue;
+    matches++;
+    htGoalsFor += htFor;
+    htGoalsAgainst += htAgainst;
+    stGoalsFor += ftFor - htFor;
+    stGoalsAgainst += ftAgainst - htAgainst;
+    if (htFor > htAgainst) htWins++;
+    else if (htFor < htAgainst) htLosses++;
+    else htDraws++;
+  }
+
+  return { matches, htGoalsFor, htGoalsAgainst, htWins, htDraws, htLosses, stGoalsFor, stGoalsAgainst };
+}

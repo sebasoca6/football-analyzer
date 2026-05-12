@@ -2,10 +2,12 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { useParams, useSearchParams, useRouter } from 'next/navigation';
-import { calculateStats, calculateProbabilities, getFormString, getYellowCardsAvg } from '@/lib/analysis';
+import { calculateStats, calculateProbabilities, getFormString, getYellowCardsAvg, getScoringStreak, getCleanSheetStreak, getWithoutWinStreak, getFormTrend, getHalfTimeStats } from '@/lib/analysis';
+import { saveMatch, removeSavedMatch, isMatchSaved } from '@/lib/favorites';
+import { generateNarrative } from '@/lib/narrative';
 import type { Fixture, TeamSeasonStats, AnalysisStats, Probabilities } from '@/types/football';
 
-type Tab = 'resumen' | 'h2h' | 'local' | 'visitante' | 'estadisticas' | 'probabilidades';
+type Tab = 'resumen' | 'h2h' | 'local' | 'visitante' | 'estadisticas' | 'probabilidades' | 'analisis';
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'resumen', label: 'Resumen' },
@@ -14,6 +16,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: 'visitante', label: 'Forma Visitante' },
   { id: 'estadisticas', label: 'Estadísticas' },
   { id: 'probabilidades', label: 'Probabilidades' },
+  { id: 'analisis', label: '📝 Análisis' },
 ];
 
 function FormDot({ result }: { result: 'W' | 'D' | 'L' }) {
@@ -228,6 +231,12 @@ export default function MatchPage() {
   const [awaySeasonStats, setAwaySeasonStats] = useState<TeamSeasonStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [saved, setSaved] = useState(false);
+  const [bookOdds, setBookOdds] = useState({ home: '', draw: '', away: '', over25: '', under25: '', btts: '', noBtts: '' });
+
+  useEffect(() => {
+    if (id) setSaved(isMatchSaved(Number(id)));
+  }, [id]);
 
   const fetchData = useCallback(async () => {
     if (!homeId || !awayId || !leagueId) {
@@ -315,17 +324,80 @@ export default function MatchPage() {
   const homeForm5 = getFormString(homeFixtures, homeId, 5);
   const awayForm5 = getFormString(awayFixtures, awayId, 5);
 
+  const homeScoringStreak = getScoringStreak(homeFixtures, homeId);
+  const awayScoringStreak = getScoringStreak(awayFixtures, awayId);
+  const homeCSStreak = getCleanSheetStreak(homeFixtures, homeId);
+  const awayCSStreak = getCleanSheetStreak(awayFixtures, awayId);
+  const homeNoWinStreak = getWithoutWinStreak(homeFixtures, homeId);
+  const awayNoWinStreak = getWithoutWinStreak(awayFixtures, awayId);
+  const homeTrend = getFormTrend(homeFixtures, homeId);
+  const awayTrend = getFormTrend(awayFixtures, awayId);
+  const homeHT = getHalfTimeStats(homeFixtures, homeId, 10);
+  const awayHT = getHalfTimeStats(awayFixtures, awayId, 10);
+
+  const trendLabel = (t: ReturnType<typeof getFormTrend>) =>
+    t === 'improving' ? { text: '↑ Mejorando', cls: 'text-green-400' }
+    : t === 'declining' ? { text: '↓ Bajando', cls: 'text-red-400' }
+    : { text: '→ Estable', cls: 'text-yellow-400' };
+
+  const narrative = homeFixtures.length > 0 ? generateNarrative({
+    homeName, awayName,
+    homeStats10, awayStats10,
+    homeStats5, awayStats5,
+    h2hStats: h2hHomeStats,
+    h2hCount: h2hFixtures.length,
+    probs, homeTrend, awayTrend,
+    homeScoringStreak, awayScoringStreak,
+    homeCSStreak, awayCSStreak,
+    homeNoWinStreak, awayNoWinStreak,
+    homeHT, awayHT,
+  }) : '';
+
+  function valueColor(edge: number) {
+    if (edge >= 5) return 'text-green-400 font-bold';
+    if (edge >= 2) return 'text-yellow-400';
+    if (edge < 0) return 'text-red-400';
+    return 'text-slate-400';
+  }
+
+  const valueRows: { label: string; modelProb: number; oddsKey: keyof typeof bookOdds }[] = [
+    { label: `Victoria ${homeName}`, modelProb: probs.homeWin, oddsKey: 'home' },
+    { label: 'Empate', modelProb: probs.draw, oddsKey: 'draw' },
+    { label: `Victoria ${awayName}`, modelProb: probs.awayWin, oddsKey: 'away' },
+    { label: 'Más de 2.5 goles', modelProb: probs.over25, oddsKey: 'over25' },
+    { label: 'Menos de 2.5 goles', modelProb: probs.under25, oddsKey: 'under25' },
+    { label: 'BTTS Sí', modelProb: probs.btts, oddsKey: 'btts' },
+    { label: 'BTTS No', modelProb: probs.noBtts, oddsKey: 'noBtts' },
+  ];
+
   const pct = (n: number, d: number) => (d > 0 ? Math.round((n / d) * 100) : 0);
 
   return (
     <div className="space-y-6">
-      {/* Back Button */}
-      <button
-        onClick={() => router.back()}
-        className="text-sm text-slate-400 hover:text-green-400 flex items-center gap-1"
-      >
-        ← Volver
-      </button>
+      {/* Back Button + Save */}
+      <div className="flex items-center justify-between">
+        <button
+          onClick={() => router.back()}
+          className="text-sm text-slate-400 hover:text-green-400 flex items-center gap-1"
+        >
+          ← Volver
+        </button>
+        <button
+          onClick={() => {
+            const fid = Number(id);
+            if (saved) { removeSavedMatch(fid); setSaved(false); }
+            else {
+              saveMatch({ fixtureId: fid, homeName, awayName, homeLogo, awayLogo, leagueName, date: matchDate, homeId, awayId, leagueId, season: Number(season) });
+              setSaved(true);
+            }
+          }}
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-sm font-medium transition-all ${
+            saved ? 'bg-yellow-500/20 border-yellow-500/40 text-yellow-400' : 'bg-slate-800 border-slate-700 text-slate-400 hover:border-yellow-500/40 hover:text-yellow-400'
+          }`}
+        >
+          {saved ? '★ Guardado' : '☆ Guardar'}
+        </button>
+      </div>
 
       {/* Match Header */}
       <div className="bg-[#111827] border border-slate-800 rounded-2xl p-6">
@@ -411,6 +483,58 @@ export default function MatchPage() {
         <div className="grid md:grid-cols-2 gap-4">
           <StatsCard stats={homeStats10} label={`${homeName} — Últimos 10`} />
           <StatsCard stats={awayStats10} label={`${awayName} — Últimos 10`} />
+
+          {/* Tendencias */}
+          <div className="col-span-full bg-[#1a2236] rounded-xl p-4">
+            <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">Tendencias y Rachas</h4>
+            <div className="grid grid-cols-2 gap-6">
+              {[{ name: homeName, scoring: homeScoringStreak, cs: homeCSStreak, noWin: homeNoWinStreak, trend: homeTrend, ht: homeHT },
+                { name: awayName, scoring: awayScoringStreak, cs: awayCSStreak, noWin: awayNoWinStreak, trend: awayTrend, ht: awayHT }]
+                .map(({ name, scoring, cs, noWin, trend, ht }) => {
+                  const tl = trendLabel(trend);
+                  return (
+                    <div key={name} className="space-y-2 text-sm">
+                      <p className="font-semibold text-slate-300 text-xs truncate">{name}</p>
+                      <div className="space-y-1.5">
+                        <div className="flex justify-between">
+                          <span className="text-slate-400">Marcando seguido</span>
+                          <span className={`font-bold ${scoring >= 5 ? 'text-green-400' : scoring >= 3 ? 'text-yellow-400' : 'text-slate-300'}`}>{scoring} partidos</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-slate-400">Portería a 0 seguido</span>
+                          <span className={`font-bold ${cs >= 3 ? 'text-green-400' : cs >= 2 ? 'text-yellow-400' : 'text-slate-300'}`}>{cs} partidos</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-slate-400">Sin ganar</span>
+                          <span className={`font-bold ${noWin >= 5 ? 'text-red-400' : noWin >= 3 ? 'text-yellow-400' : 'text-slate-300'}`}>{noWin} partidos</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-slate-400">Tendencia (últ. 10)</span>
+                          <span className={`font-bold ${tl.cls}`}>{tl.text}</span>
+                        </div>
+                        {ht.matches > 0 && (
+                          <div className="mt-2 pt-2 border-t border-slate-700/50 space-y-1">
+                            <p className="text-xs text-slate-500 uppercase tracking-wide">1er Tiempo (últ. 10)</p>
+                            <div className="flex justify-between">
+                              <span className="text-slate-400">Goles HT/partido</span>
+                              <span className="text-white font-mono">{ht.matches > 0 ? ((ht.htGoalsFor + ht.htGoalsAgainst) / ht.matches).toFixed(1) : '-'}</span>
+                            </div>
+                            <div className="flex justify-between text-xs">
+                              <span className="text-slate-400">Ganando HT</span>
+                              <span className="text-green-400">{ht.htWins}/{ht.matches}</span>
+                            </div>
+                            <div className="flex justify-between text-xs">
+                              <span className="text-slate-400">Goles 2T</span>
+                              <span className="text-blue-400">{ht.stGoalsFor} a favor / {ht.stGoalsAgainst} en contra</span>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+            </div>
+          </div>
 
           {homeSeasonStats && (
             <div className="bg-[#1a2236] rounded-xl p-4 col-span-full">
@@ -754,10 +878,95 @@ export default function MatchPage() {
             </div>
           </div>
 
+          {/* Value Betting Calculator */}
+          <div className="bg-[#111827] border border-slate-800 rounded-xl p-5">
+            <h3 className="font-semibold text-white mb-1">Calculadora de Valor vs Casas</h3>
+            <p className="text-xs text-slate-500 mb-4">Introduce las cuotas decimales de las casas de apuestas para detectar value</p>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-xs text-slate-400 uppercase tracking-wider border-b border-slate-800">
+                    <th className="py-2 text-left">Mercado</th>
+                    <th className="py-2 text-center">Cuota Casa</th>
+                    <th className="py-2 text-center">Prob. Impl.</th>
+                    <th className="py-2 text-center">Prob. Modelo</th>
+                    <th className="py-2 text-center">Margen Valor</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {valueRows.map(({ label, modelProb, oddsKey }) => {
+                    const oddsVal = parseFloat(bookOdds[oddsKey]);
+                    const impliedProb = !isNaN(oddsVal) && oddsVal > 1 ? (1 / oddsVal) * 100 : null;
+                    const edge = impliedProb !== null ? modelProb - impliedProb : null;
+                    return (
+                      <tr key={oddsKey} className="border-b border-slate-800/50">
+                        <td className="py-2.5 text-slate-300 pr-4">{label}</td>
+                        <td className="py-2.5 text-center">
+                          <input
+                            type="number"
+                            min="1.01"
+                            step="0.01"
+                            placeholder="ej: 2.10"
+                            value={bookOdds[oddsKey]}
+                            onChange={(e) => setBookOdds(prev => ({ ...prev, [oddsKey]: e.target.value }))}
+                            className="w-20 bg-slate-800 border border-slate-700 text-slate-200 rounded px-2 py-1 text-xs text-center focus:outline-none focus:border-green-500"
+                          />
+                        </td>
+                        <td className="py-2.5 text-center text-slate-400">
+                          {impliedProb !== null ? `${impliedProb.toFixed(1)}%` : '—'}
+                        </td>
+                        <td className="py-2.5 text-center text-blue-400 font-semibold">
+                          {modelProb.toFixed(1)}%
+                        </td>
+                        <td className="py-2.5 text-center">
+                          {edge !== null ? (
+                            <span className={`font-bold ${valueColor(edge)}`}>
+                              {edge >= 0 ? '+' : ''}{edge.toFixed(1)}%
+                              {edge >= 5 ? ' ✅' : edge >= 2 ? ' 🟡' : edge < 0 ? ' ❌' : ''}
+                            </span>
+                          ) : '—'}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            <p className="text-xs text-slate-600 mt-3">✅ Valor positivo claro (&gt;5%) · 🟡 Ligero valor (&gt;2%) · ❌ Sin valor (cuota baja respecto al modelo)</p>
+          </div>
+
           <div className="bg-yellow-500/10 border border-yellow-500/20 rounded-xl p-4 text-xs text-yellow-200/70">
             ⚠️ <strong>Aviso:</strong> Las probabilidades son estimaciones estadísticas basadas en datos históricos. 
             No constituyen asesoramiento de apuestas. Los resultados deportivos son impredecibles.
           </div>
+        </div>
+      )}
+
+      {activeTab === 'analisis' && (
+        <div className="space-y-4">
+          {!narrative ? (
+            <div className="text-center py-12 text-slate-500">
+              <p>No hay suficientes datos para generar el análisis.</p>
+            </div>
+          ) : (
+            <>
+              <div className="bg-[#111827] border border-slate-800 rounded-xl p-5">
+                <div className="flex items-center gap-2 mb-4">
+                  <span className="text-lg">📝</span>
+                  <h3 className="font-semibold text-white">Análisis del partido</h3>
+                  <span className="text-xs bg-blue-500/20 text-blue-400 px-2 py-0.5 rounded-full ml-auto">Generado por IA estadística</span>
+                </div>
+                <div className="space-y-4">
+                  {narrative.split('\n\n').map((paragraph, i) => (
+                    <p key={i} className="text-slate-300 text-sm leading-relaxed">{paragraph}</p>
+                  ))}
+                </div>
+              </div>
+              <div className="bg-yellow-500/10 border border-yellow-500/20 rounded-xl p-4 text-xs text-yellow-200/70">
+                ⚠️ <strong>Aviso:</strong> Este análisis es una estimación estadística automática basada en datos históricos. No constituye asesoramiento de apuestas.
+              </div>
+            </>
+          )}
         </div>
       )}
     </div>

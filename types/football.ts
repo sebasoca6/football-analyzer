@@ -128,3 +128,31 @@ export interface LeagueConfig {
   flag: string;
   logo: string;
 }
+
+export interface StandingRow {
+  position: number;
+  team: { id: number; name: string; shortName: string; crest: string };
+  playedGames: number;
+  form: string | null;
+  won: number;
+  draw: number;
+  lost: number;
+  points: number;
+  goalsFor: number;
+  goalsAgainst: number;
+  goalDifference: number;
+}
+
+export interface SavedMatch {
+  fixtureId: number;
+  homeName: string;
+  awayName: string;
+  homeLogo: string;
+  awayLogo: string;
+  leagueName: string;
+  date: string;
+  homeId: number;
+  awayId: number;
+  leagueId: number;
+  season: number;
+}
